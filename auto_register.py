@@ -9,7 +9,6 @@ from playwright.sync_api import sync_playwright
 import openpyxl
 from openpyxl import Workbook
 
-SCREENSHOT_DIR = r"C:\Users\12824\Desktop\dataLabel\0319\p13\login_picture"
 EXCEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "register_data.xlsx")
 
 FIRST_NAMES = ["张", "王", "李", "赵", "刘", "陈", "杨", "黄", "周", "吴", "徐", "孙", "马", "朱", "胡", "郭", "何", "高", "林", "罗"]
@@ -44,17 +43,29 @@ def generate_random_phone():
     suffix = ''.join(random.choices(string.digits, k=8))
     return prefix + suffix
 
-def ensure_screenshot_dir():
-    if not os.path.exists(SCREENSHOT_DIR):
-        os.makedirs(SCREENSHOT_DIR)
-        print(f"创建截图目录: {SCREENSHOT_DIR}")
+def generate_id_card():
+    area_code = random.choice(["110101", "310101", "440101", "440301", "330101", "320101", "510101", "420101"])
+    year = random.randint(1970, 2000)
+    month = random.randint(1, 12)
+    day = random.randint(1, 28)
+    serial = random.randint(100, 999)
+    
+    id_str = f"{area_code}{year:04d}{month:02d}{day:02d}{serial:03d}"
+    
+    weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+    check_codes = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2']
+    
+    total = sum(int(id_str[i]) * weights[i] for i in range(17))
+    check_code = check_codes[total % 11]
+    
+    return id_str + check_code
 
 def init_excel():
     if not os.path.exists(EXCEL_FILE):
         wb = Workbook()
         ws = wb.active
-        ws.title = "注册数据"
-        headers = ["序号", "用户名", "密码", "邮箱", "姓名", "年龄", "手机号", "注册开始时间", "注册结束时间", "注册耗时(秒)", "登录开始时间", "登录结束时间", "登录耗时(秒)", "总耗时(秒)", "注册状态", "登录状态", "验证状态"]
+        ws.title = "注册购票数据"
+        headers = ["序号", "用户名", "密码", "邮箱", "姓名", "年龄", "手机号", "注册状态", "登录状态", "购票姓名", "身份证号", "购票状态"]
         ws.append(headers)
         wb.save(EXCEL_FILE)
         print(f"创建Excel文件: {EXCEL_FILE}")
@@ -84,8 +95,6 @@ def perform_register(page, user_data, task_id):
     name = user_data["name"]
     age = user_data["age"]
     phone = user_data["phone"]
-    
-    register_start_time = datetime.now()
     
     username_selectors = [
         'input[name="username"]',
@@ -151,27 +160,11 @@ def perform_register(page, user_data, task_id):
     
     print(f"[任务{task_id}] 查找注册表单字段...")
     
-    username_input, _ = find_input(page, username_selectors, "用户名")
-    password_input, _ = find_input(page, password_selectors, "密码")
-    email_input, _ = find_input(page, email_selectors, "邮箱")
-    name_input, _ = find_input(page, name_selectors, "姓名")
-    age_input, _ = find_input(page, age_selectors, "年龄")
-    phone_input, _ = find_input(page, phone_selectors, "手机号")
-    
-    print(f"[任务{task_id}] 填写注册信息...")
-    
-    if username_input:
-        username_input.fill(username)
-    if password_input:
-        password_input.fill(password)
-    if email_input:
-        email_input.fill(email)
-    if name_input:
-        name_input.fill(name)
-    if age_input:
-        age_input.fill(age)
-    if phone_input:
-        phone_input.fill(phone)
+    input_elements = page.query_selector_all('input')
+    if len(input_elements) >= 4:
+        input_elements[0].fill(username)  # 账号
+        input_elements[1].fill(name)      # 姓名
+        input_elements[3].fill(password)  # 密码
     
     page.wait_for_timeout(500)
     
@@ -204,84 +197,53 @@ def perform_register(page, user_data, task_id):
         page.wait_for_timeout(2000)
         register_status = "成功"
     
-    register_end_time = datetime.now()
-    register_duration = (register_end_time - register_start_time).total_seconds()
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    screenshot_path = os.path.join(SCREENSHOT_DIR, f"task{task_id}_register_{timestamp}.png")
-    page.screenshot(path=screenshot_path)
-    
     return {
-        "register_start_time": register_start_time,
-        "register_end_time": register_end_time,
-        "register_duration": register_duration,
         "register_status": register_status
     }
 
-def perform_login(page, user_data, task_id):
+def perform_login(page, user_data, task_id, context):
     username = user_data["username"]
     password = user_data["password"]
     
-    login_start_time = datetime.now()
-    
     print(f"[任务{task_id}] 跳转到登录页面...")
     
-    login_link_selectors = [
-        'a:has-text("登录")',
-        'text=登录',
-        'a[href*="login"]',
-        '.login-link',
-        '#login-link'
-    ]
-    
-    login_link = None
-    for selector in login_link_selectors:
-        try:
-            login_link = page.query_selector(selector)
-            if login_link:
-                break
-        except:
-            continue
-    
-    if login_link:
-        login_link.click()
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(1000)
+    if 'register-success' in page.url:
+        login_now_btn = page.query_selector('button.btn-primary') or page.query_selector('button:has-text("立即登录")')
+        if login_now_btn:
+            login_now_btn.click()
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(1000)
     else:
-        page.goto("http://39.107.109.8:8082/", timeout=30000)
-        page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(1000)
+        login_link_selectors = [
+            'a:has-text("登录")',
+            'text=登录',
+            'a[href*="login"]',
+            '.login-link',
+            '#login-link'
+        ]
+        
+        login_link = None
+        for selector in login_link_selectors:
+            try:
+                login_link = page.query_selector(selector)
+                if login_link:
+                    break
+            except:
+                continue
+        
+        if login_link:
+            login_link.click()
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(1000)
+        else:
+            page.goto("http://39.107.109.8:8082/login", timeout=30000)
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(1000)
     
-    username_selectors = [
-        'input[name="username"]',
-        'input[name="user"]',
-        'input[name="userName"]',
-        'input[placeholder*="用户名"]',
-        'input[placeholder*="账号"]',
-        '#username',
-        '#userName',
-        'input[type="text"]:first-of-type'
-    ]
-    
-    password_selectors = [
-        'input[name="password"]',
-        'input[name="pwd"]',
-        'input[name="userPassword"]',
-        'input[placeholder*="密码"]',
-        '#password',
-        '#pwd',
-        'input[type="password"]'
-    ]
-    
-    username_input, _ = find_input(page, username_selectors, "用户名")
-    password_input, _ = find_input(page, password_selectors, "密码")
-    
-    print(f"[任务{task_id}] 填写登录信息...")
-    
-    if username_input:
-        username_input.fill(username)
-    if password_input:
-        password_input.fill(password)
+    login_inputs = page.query_selector_all('input')
+    if len(login_inputs) >= 2:
+        login_inputs[0].fill(username)
+        login_inputs[1].fill(password)
     
     page.wait_for_timeout(500)
     
@@ -305,7 +267,6 @@ def perform_login(page, user_data, task_id):
             continue
     
     login_status = "失败"
-    verify_status = "未验证"
     
     if login_btn:
         print(f"[任务{task_id}] 点击登录按钮...")
@@ -313,40 +274,104 @@ def perform_login(page, user_data, task_id):
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(2000)
         login_status = "成功"
-        
-        print(f"[任务{task_id}] 验证用户信息...")
-        
-        page_content = page.content()
-        verify_keywords = [user_data["username"], user_data["name"], "个人信息", "欢迎", "我的", "用户中心"]
-        
-        for keyword in verify_keywords:
-            if keyword in page_content:
-                verify_status = "验证成功"
-                break
-        
-        if verify_status != "验证成功":
-            verify_status = "验证失败"
-    
-    login_end_time = datetime.now()
-    login_duration = (login_end_time - login_start_time).total_seconds()
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    screenshot_path = os.path.join(SCREENSHOT_DIR, f"task{task_id}_login_{timestamp}.png")
-    page.screenshot(path=screenshot_path)
     
     return {
-        "login_start_time": login_start_time,
-        "login_end_time": login_end_time,
-        "login_duration": login_duration,
-        "login_status": login_status,
-        "verify_status": verify_status
+        "login_status": login_status
+    }
+
+def perform_ticket_purchase(page, context, task_id):
+    print(f"[任务{task_id}] 开始抢票流程...")
+    
+    ticket_btn = page.query_selector('button.btn-grab-ticket') or page.query_selector('button:has-text("立即抢票")')
+    if ticket_btn:
+        print(f"[任务{task_id}] 点击立即抢票按钮...")
+        ticket_btn.click()
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(3000)
+    else:
+        buttons = page.query_selector_all('button')
+        for btn in buttons:
+            btn_text = btn.text_content().strip() if btn.text_content() else ''
+            if '抢票' in btn_text:
+                btn.click()
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(3000)
+                break
+    
+    ticket_page = None
+    for p in context.pages:
+        if '8085' in p.url or 'ticket' in p.url.lower():
+            ticket_page = p
+            break
+    
+    if not ticket_page and len(context.pages) > 1:
+        ticket_page = context.pages[1]
+    
+    if not ticket_page:
+        print(f"[任务{task_id}] 未找到抢票页面")
+        return {"ticket_name": "", "ticket_id": "", "purchase_status": "失败-未找到抢票页面"}
+    
+    ticket_page.wait_for_load_state("networkidle")
+    ticket_page.wait_for_timeout(2000)
+    print(f"[任务{task_id}] 抢票页面URL: {ticket_page.url}")
+    
+    ticket_btn2 = ticket_page.query_selector('button.ticket-btn') or ticket_page.query_selector('button:has-text("立即抢票")')
+    if ticket_btn2:
+        print(f"[任务{task_id}] 点击抢票页面的立即抢票...")
+        ticket_btn2.click()
+        ticket_page.wait_for_load_state("networkidle")
+        ticket_page.wait_for_timeout(3000)
+    
+    print(f"[任务{task_id}] 购票页面URL: {ticket_page.url}")
+    
+    inputs = ticket_page.query_selector_all('input')
+    print(f"[任务{task_id}] 购票表单输入框数量: {len(inputs)}")
+    
+    ticket_name = generate_random_name()
+    ticket_id = generate_id_card()
+    
+    print(f"[任务{task_id}] 生成购票信息 - 姓名: {ticket_name}, 身份证: {ticket_id}")
+    
+    purchase_status = "失败"
+    
+    if len(inputs) >= 2:
+        for inp in inputs:
+            placeholder = inp.get_attribute('placeholder') or ''
+            if '姓名' in placeholder or 'name' in placeholder.lower():
+                inp.fill(ticket_name)
+            elif '身份证' in placeholder or 'id' in placeholder.lower() or 'card' in placeholder.lower():
+                inp.fill(ticket_id)
+        
+        ticket_page.wait_for_timeout(1000)
+        
+        submit_btn = None
+        buttons = ticket_page.query_selector_all('button')
+        for btn in buttons:
+            btn_text = btn.text_content().strip() if btn.text_content() else ''
+            if '确认' in btn_text or '购买' in btn_text or '提交' in btn_text:
+                submit_btn = btn
+                break
+        
+        if submit_btn:
+            print(f"[任务{task_id}] 点击确认购买按钮...")
+            submit_btn.click()
+            ticket_page.wait_for_load_state("networkidle")
+            ticket_page.wait_for_timeout(2000)
+            purchase_status = "成功"
+        else:
+            purchase_status = "失败-未找到提交按钮"
+    else:
+        purchase_status = "失败-未找到输入框"
+    
+    return {
+        "ticket_name": ticket_name,
+        "ticket_id": ticket_id,
+        "purchase_status": purchase_status
     }
 
 def single_task(task_id, user_data):
     print(f"\n[任务{task_id}] 开始执行...")
     print(f"[任务{task_id}] 用户名: {user_data['username']}")
-    
-    task_start_time = datetime.now()
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
@@ -369,11 +394,20 @@ def single_task(task_id, user_data):
                 page.wait_for_timeout(1000)
             
             register_result = perform_register(page, user_data, task_id)
+            print(f"[任务{task_id}] 注册状态: {register_result['register_status']}")
             
-            login_result = perform_login(page, user_data, task_id)
+            login_result = perform_login(page, user_data, task_id, context)
+            print(f"[任务{task_id}] 登录状态: {login_result['login_status']}")
             
-            task_end_time = datetime.now()
-            total_duration = (task_end_time - task_start_time).total_seconds()
+            ticket_result = {
+                "ticket_name": "",
+                "ticket_id": "",
+                "purchase_status": "未购票"
+            }
+            
+            if login_result['login_status'] == "成功":
+                ticket_result = perform_ticket_purchase(page, context, task_id)
+                print(f"[任务{task_id}] 购票状态: {ticket_result['purchase_status']}")
             
             excel_data = [
                 task_id,
@@ -383,46 +417,31 @@ def single_task(task_id, user_data):
                 user_data["name"],
                 user_data["age"],
                 user_data["phone"],
-                register_result["register_start_time"].strftime("%Y-%m-%d %H:%M:%S"),
-                register_result["register_end_time"].strftime("%Y-%m-%d %H:%M:%S"),
-                round(register_result["register_duration"], 2),
-                login_result["login_start_time"].strftime("%Y-%m-%d %H:%M:%S"),
-                login_result["login_end_time"].strftime("%Y-%m-%d %H:%M:%S"),
-                round(login_result["login_duration"], 2),
-                round(total_duration, 2),
                 register_result["register_status"],
                 login_result["login_status"],
-                login_result["verify_status"]
+                ticket_result["ticket_name"],
+                ticket_result["ticket_id"],
+                ticket_result["purchase_status"]
             ]
             
             save_to_excel(excel_data)
             
             print(f"\n[任务{task_id}] ========== 执行完成 ==========")
             print(f"[任务{task_id}] 注册状态: {register_result['register_status']}")
-            print(f"[任务{task_id}] 注册耗时: {register_result['register_duration']:.2f}秒")
             print(f"[任务{task_id}] 登录状态: {login_result['login_status']}")
-            print(f"[任务{task_id}] 登录耗时: {login_result['login_duration']:.2f}秒")
-            print(f"[任务{task_id}] 验证状态: {login_result['verify_status']}")
-            print(f"[任务{task_id}] 总耗时: {total_duration:.2f}秒")
+            print(f"[任务{task_id}] 购票状态: {ticket_result['purchase_status']}")
             print(f"[任务{task_id}] ==============================\n")
             
             return {
                 "task_id": task_id,
                 "status": "成功",
-                "total_duration": total_duration,
                 "register_status": register_result["register_status"],
                 "login_status": login_result["login_status"],
-                "verify_status": login_result["verify_status"]
+                "purchase_status": ticket_result["purchase_status"]
             }
             
         except Exception as e:
             print(f"[任务{task_id}] 发生错误: {e}")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            error_screenshot = os.path.join(SCREENSHOT_DIR, f"task{task_id}_error_{timestamp}.png")
-            try:
-                page.screenshot(path=error_screenshot)
-            except:
-                pass
             
             return {
                 "task_id": task_id,
@@ -443,11 +462,10 @@ def generate_user_data():
     }
 
 def run_parallel_register(num_tasks=5):
-    ensure_screenshot_dir()
     init_excel()
     
     print("=" * 60)
-    print(f"开始并行执行 {num_tasks} 个注册任务")
+    print(f"开始并行执行 {num_tasks} 个注册购票任务")
     print("=" * 60)
     
     overall_start_time = datetime.now()
@@ -480,19 +498,20 @@ def run_parallel_register(num_tasks=5):
     print("=" * 60)
     
     success_count = sum(1 for r in results if r.get("status") == "成功")
+    purchase_success_count = sum(1 for r in results if r.get("purchase_status") == "成功")
     fail_count = num_tasks - success_count
     
     print(f"\n执行统计:")
     print(f"  总任务数: {num_tasks}")
     print(f"  成功: {success_count}")
     print(f"  失败: {fail_count}")
+    print(f"  购票成功: {purchase_success_count}")
     print(f"  总耗时: {overall_duration:.2f}秒")
     print(f"  平均耗时: {overall_duration/num_tasks:.2f}秒/任务")
     
     print(f"\n数据已保存到: {EXCEL_FILE}")
-    print(f"截图已保存到: {SCREENSHOT_DIR}")
     
     return results
 
 if __name__ == "__main__":
-    results = run_parallel_register(5)
+    results = run_parallel_register(2)
